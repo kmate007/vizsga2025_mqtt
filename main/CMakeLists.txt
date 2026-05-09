@@ -11,4 +11,5 @@ idf_component_register(
         log 
         espressif__mqtt
         espressif__lan87xx
+	mqtt
 )

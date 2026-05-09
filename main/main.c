@@ -18,14 +18,31 @@
 static const char *TAG = "eth_mqtt_static";
 
 // --- STATIKUS IP KONFIGURÁCIÓ ---
-#define DEVICE_IP          "192.168.10.150"
-#define DEVICE_GW          "192.168.10.1"
+#define DEVICE_IP          "192.168.50.101"
+#define DEVICE_GW          "192.168.50.100"
 #define DEVICE_NETMASK     "255.255.255.0"
 
 // --- MQTT KONFIGURÁCIÓ ---
-#define MQTT_BROKER_URL    "mqtt://192.168.10.94"
+#define MQTT_BROKER_URL    "mqtt://192.168.25.249"
 
 static esp_mqtt_client_handle_t mqtt_client = NULL;
+
+//a folyamatos üzenetküldés
+void mqtt_heartbeat_task(void *pvParameters) {
+	int iii=1;
+	char uzenet[32];
+    while (1) {
+	    iii++;
+snprintf(uzenet, sizeof(uzenet), "onlinevagyok %d", iii);
+        if (mqtt_client != NULL) {
+            // Üzenet küldése 5 másodpercenként
+            esp_mqtt_client_publish(mqtt_client, "/topic/status", uzenet, 0, 1, 0);
+            ESP_LOGI("HEARTBEAT", "Státusz üzenet elküldve");
+        }
+        // 5000 milliszekundum várakozás
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
 
 // MQTT Eseménykezelő
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -50,7 +67,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 static void start_mqtt(void) {
-    // Az újabb ESP-IDF verziókban így javasolt az inicializálás
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = MQTT_BROKER_URL,
     };
@@ -60,7 +76,7 @@ static void start_mqtt(void) {
     esp_mqtt_client_start(mqtt_client);
 }
 
-// Statikus IP beállítása - JAVÍTVA
+// Statikus IP beállítása 
 static esp_err_t set_static_ip(esp_netif_t *netif) {
     if (netif == NULL) return ESP_FAIL;
 
@@ -70,7 +86,6 @@ static esp_err_t set_static_ip(esp_netif_t *netif) {
     esp_netif_ip_info_t ip_info;
     memset(&ip_info, 0, sizeof(esp_netif_ip_info_t));
 
-    // A javított konverziós függvények
     esp_netif_str_to_ip4(DEVICE_IP, &ip_info.ip);
     esp_netif_str_to_ip4(DEVICE_GW, &ip_info.gw);
     esp_netif_str_to_ip4(DEVICE_NETMASK, &ip_info.netmask);
@@ -119,7 +134,6 @@ void init_ethernet(void) {
     esp_netif_t *eth_netif = esp_netif_new(&netif_config);
 
     // GPIO16 táp/oszcillátor engedélyezés (LAN8720 specifikus)
-    // Megjegyzés: Ellenőrizd, hogy a te hardware-eden is ez a pin felel-e a resetért/tápért!
     gpio_reset_pin(GPIO_NUM_16);
     gpio_set_direction(GPIO_NUM_16, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_16, 1);
@@ -149,7 +163,7 @@ void init_ethernet(void) {
 }
 
 void app_main(void) {
-    // NVS inicializálás (az MQTT-nek és a TCP/IP stacknek szüksége lehet rá)
+    // NVS inicializálás
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -157,7 +171,11 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // Ethernet indítása
     init_ethernet();
+
+    // Itt hozzuk létre a külön szálat az 5 másodperces küldéshez
+    xTaskCreate(mqtt_heartbeat_task, "mqtt_heartbeat_task", 4096, NULL, 5, NULL);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
